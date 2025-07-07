@@ -8,9 +8,12 @@ import kotlin.concurrent.withLock
 
 class SensorDataBuffer(val capacity: Int) {
 
-    private val x_buffer = FloatArray(capacity)
-    private val y_buffer = FloatArray(capacity)
-    private val z_buffer = FloatArray(capacity)
+    private val xBuffer = FloatArray(capacity)
+    private val yBuffer = FloatArray(capacity)
+    private val zBuffer = FloatArray(capacity)
+
+    var minVerticalAxis = 0f
+    var maxVerticalAxis = 0f
 
     private var writeIndex = 0
 
@@ -18,8 +21,8 @@ class SensorDataBuffer(val capacity: Int) {
 
     private val lock = ReentrantLock()
 
-    private val _dataFlow = MutableStateFlow<List<Float>>(emptyList())
-    val data: StateFlow<List<Float>> = _dataFlow.asStateFlow()
+    private val _dataFlow = MutableStateFlow<List<Triple<Float, Float, Float>>>(emptyList())
+    val data: StateFlow<List<Triple<Float, Float, Float>>> = _dataFlow.asStateFlow()
 
     val size: Int get() {
         return lock.withLock {
@@ -29,40 +32,55 @@ class SensorDataBuffer(val capacity: Int) {
 
     fun add(x: Float, y: Float, z: Float) {
         lock.withLock {
-            x_buffer[writeIndex] = x
-            y_buffer[writeIndex] = y
-            z_buffer[writeIndex] = z
+            xBuffer[writeIndex] = x
+            yBuffer[writeIndex] = y
+            zBuffer[writeIndex] = z
             writeIndex = (writeIndex + 1) % capacity // Wrap around
             if (currentSize < capacity) {
                 currentSize++ // Increment size until buffer is full
+            }
+
+            // Assign Vertical axis scaling
+
+            val sample = listOf(x, y, z)
+
+            val possibleMin = sample.min()
+            val possibleMax = sample.max()
+
+            if (possibleMin < minVerticalAxis) {
+                minVerticalAxis = possibleMin
+            }
+
+            if (possibleMax > maxVerticalAxis) {
+                maxVerticalAxis = possibleMax
             }
         }
         _dataFlow.value = getCurrentBufferAsList()
     }
 
-    fun getAll(): List<Float> {
+    fun getAll(): List<Triple<Float, Float, Float>> {
         lock.withLock {
             return _dataFlow.value
         }
     }
 
-    private fun getCurrentBufferAsList(): List<Float> {
+    private fun getCurrentBufferAsList(): List<Triple<Float, Float, Float>> {
         if (currentSize == 0) {
             return emptyList()
         }
 
-        val result = mutableListOf<Float>()
+        val result = mutableListOf<Triple<Float, Float, Float>>()
         if (currentSize < capacity) {
             // If buffer is not yet full, values are from 0 to currentSize - 1
             for (i in 0 until currentSize) {
-                result.add(z_buffer[i])
+                result.add(Triple(xBuffer[i], yBuffer[i], zBuffer[i]))
             }
         } else {
             // If buffer is full, values wrap around.
             // Read from oldest (at writeIndex) to newest (just before writeIndex).
             for (i in 0 until capacity) {
                 val readIndex = (writeIndex + i) % capacity
-                result.add(z_buffer[readIndex])
+                result.add(Triple(xBuffer[readIndex], yBuffer[readIndex], zBuffer[readIndex]))
             }
         }
         return result
